@@ -1,0 +1,1245 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import TextEditor from './TextEditor';
+
+const TRANSLATIONS = {
+  "en-US": {
+    "gameTitle": "Neon Slime Arena",
+    "singlePlayer": "Single Player",
+    "multiplayer": "Multiplayer",
+    "selectDifficulty": "Select Difficulty",
+    "easy": "Easy",
+    "medium": "Medium",
+    "hard": "Hard",
+    "selectDuration": "Select Game Duration",
+    "cyanTeam": "Cyan Team",
+    "redTeam": "Red Team",
+    "versus": "vs",
+    "oneMinute": "1 Minute",
+    "twoMinutes": "2 Minutes",
+    "fourMinutes": "4 Minutes",
+    "eightMinutes": "8 Minutes",
+    "worldCup": "World Cup",
+    "multiplayerControls1": "Left Team: W (jump), A/D (move), S (grab)",
+    "multiplayerControls2": "Right Team: ↑ (jump), ←/→ (move), ↓ (grab)",
+    "singlePlayerControls1": "Use Arrow Keys: ↑ (jump), ←/→ (move), ↓ (grab)",
+    "singlePlayerControls2": "Hold ↓ to grab the ball when it's near!",
+    "backButton": "Back",
+    "gameWinner": "Wins!",
+    "gameDraw": "It's a Draw!",
+    "backToMenu": "Back to Menu"
+  },
+  "es-ES": {
+    "gameTitle": "Neon Slime Arena",
+    "singlePlayer": "Un Jugador",
+    "multiplayer": "Multijugador",
+    "selectDifficulty": "Seleccionar Dificultad",
+    "easy": "Fácil",
+    "medium": "Medio",
+    "hard": "Difícil",
+    "selectDuration": "Seleccionar Duración del Juego",
+    "cyanTeam": "Equipo Cian",
+    "redTeam": "Equipo Rojo",
+    "versus": "vs",
+    "oneMinute": "1 Minuto",
+    "twoMinutes": "2 Minutos",
+    "fourMinutes": "4 Minutos",
+    "eightMinutes": "8 Minutos",
+    "worldCup": "Copa Mundial",
+    "multiplayerControls1": "Equipo Izquierdo: W (saltar), A/D (mover), S (agarrar)",
+    "multiplayerControls2": "Equipo Derecho: ↑ (saltar), ←/→ (mover), ↓ (agarrar)",
+    "singlePlayerControls1": "Usar Teclas de Flecha: ↑ (saltar), ←/→ (mover), ↓ (agarrar)",
+    "singlePlayerControls2": "¡Mantén presionado ↓ para agarrar la pelota cuando esté cerca!",
+    "backButton": "Atrás",
+    "gameWinner": "¡Gana!",
+    "gameDraw": "¡Es un Empate!",
+    "backToMenu": "Volver al Menú"
+  }
+};
+
+const appLocale = '{{APP_LOCALE}}';
+const browserLocale = navigator.languages?.[0] || navigator.language || 'en-US';
+const findMatchingLocale = (locale) => {
+  if (TRANSLATIONS[locale]) return locale;
+  const lang = locale.split('-')[0];
+  const match = Object.keys(TRANSLATIONS).find(key => key.startsWith(lang + '-'));
+  return match || 'en-US';
+};
+const locale = (appLocale !== '{{APP_LOCALE}}') ? findMatchingLocale(appLocale) : findMatchingLocale(browserLocale);
+const t = (key) => TRANSLATIONS[locale]?.[key] || TRANSLATIONS['en-US'][key] || key;
+
+const GAME_WIDTH = 800;
+const GAME_HEIGHT = 400;
+const GROUND_HEIGHT = 80;
+const SLIME_RADIUS = 40;
+const BALL_RADIUS = 10;
+const GOAL_WIDTH = 80;
+const GOAL_HEIGHT = 120;
+const GRAVITY = 0.6;
+const SLIME_SPEED = 5;
+const SLIME_JUMP_POWER = -12;
+const BALL_DAMPING = 0.99;
+const BALL_BOUNCE_DAMPING = 0.8;
+const MAX_BALL_SPEED = 13;
+const SlimeSoccer = () => {
+  const canvasRef = useRef(null);
+  const animationRef = useRef(null);
+  const keysRef = useRef({});
+  const lastFrameTimeRef = useRef(0);
+  const audioContextRef = useRef(null);
+  
+  const [gameMode, setGameMode] = useState(null);
+  const [playerMode, setPlayerMode] = useState(null);
+  const [difficulty, setDifficulty] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [score, setScore] = useState({ left: 0, right: 0 });
+  const [gameStarted, setGameStarted] = useState(false);
+  const [winner, setWinner] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [touchControls, setTouchControls] = useState({ left: false, right: false, jump: false, grab: false });
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [textEditorOpen, setTextEditorOpen] = useState(false);
+  const [textLayers, setTextLayers] = useState([
+    {
+      id: 1,
+      text: 'Neon Slime Arena',
+      x: 50,
+      y: 50,
+      fontSize: 48,
+      fontFamily: 'Arial',
+      color: '#00CED1',
+      opacity: 1,
+      rotation: 0,
+      fontWeight: 'bold',
+      textShadow: true,
+      stroke: false,
+      strokeColor: '#000000',
+      strokeWidth: 2
+    },
+    {
+      id: 2,
+      text: 'Created by Jayasurya',
+      x: 50,
+      y: 120,
+      fontSize: 24,
+      fontFamily: 'Arial',
+      color: '#FFFFFF',
+      opacity: 0.8,
+      rotation: 0,
+      fontWeight: 'normal',
+      textShadow: true,
+      stroke: false,
+      strokeColor: '#000000',
+      strokeWidth: 2
+    }
+  ]);
+  const [playerNames, setPlayerNames] = useState({
+    left: 'Player 1',
+    right: 'Player 2'
+  });
+  const [gameHistory, setGameHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [matchDuration, setMatchDuration] = useState(0);
+  
+  const gameStateRef = useRef({
+    leftSlime: {
+      x: 200, y: GAME_HEIGHT - GROUND_HEIGHT, vx: 0, vy: 0,
+      isGrabbing: false, hasBall: false, goalLineTime: 0,
+      targetX: 200, lastDecisionTime: 0, decisionCooldown: 0, stableStart: true
+    },
+    rightSlime: {
+      x: 600, y: GAME_HEIGHT - GROUND_HEIGHT, vx: 0, vy: 0,
+      isGrabbing: false, hasBall: false, goalLineTime: 0
+    },
+    ball: {
+      x: GAME_WIDTH / 2, y: 150, vx: 0, vy: 0,
+      grabbedBy: null, grabAngle: 0, grabAngularVelocity: 0
+    }
+  });
+
+  // Sound system
+  const initAudio = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+  };
+
+  const playSound = useCallback((type) => {
+    if (!soundEnabled || !audioContextRef.current) return;
+    
+    const ctx = audioContextRef.current;
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    switch (type) {
+      case 'ballHit':
+        oscillator.frequency.setValueAtTime(200, ctx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.1);
+        break;
+      case 'jump':
+        oscillator.frequency.setValueAtTime(300, ctx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(500, ctx.currentTime + 0.15);
+        gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.15);
+        break;
+      case 'grab':
+        oscillator.frequency.setValueAtTime(150, ctx.currentTime);
+        gainNode.gain.setValueAtTime(0.15, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.05);
+        break;
+      case 'goal':
+        // Goal celebration sound
+        for (let i = 0; i < 3; i++) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(400 + i * 100, ctx.currentTime + i * 0.1);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime + i * 0.1);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + i * 0.1 + 0.2);
+          osc.start(ctx.currentTime + i * 0.1);
+          osc.stop(ctx.currentTime + i * 0.1 + 0.2);
+        }
+        break;
+      case 'bounce':
+        oscillator.frequency.setValueAtTime(150, ctx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.08);
+        gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.08);
+        break;
+      default:
+        break;
+    }
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      e.preventDefault();
+      keysRef.current[e.key.toLowerCase()] = true;
+    };
+    const handleKeyUp = (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      e.preventDefault();
+      keysRef.current[e.key.toLowerCase()] = false;
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    // Initialize audio on first user interaction
+    const initAudioOnInteraction = () => {
+      initAudio();
+      document.removeEventListener('click', initAudioOnInteraction);
+      document.removeEventListener('keydown', initAudioOnInteraction);
+    };
+    document.addEventListener('click', initAudioOnInteraction);
+    document.addEventListener('keydown', initAudioOnInteraction);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('click', initAudioOnInteraction);
+      document.removeEventListener('keydown', initAudioOnInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768 || 'ontouchstart' in window);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Load player names and history from localStorage
+  useEffect(() => {
+    try {
+      const storedNames = localStorage.getItem('neonSlime_playerNames');
+      if (storedNames) {
+        setPlayerNames(JSON.parse(storedNames));
+      }
+      const storedHistory = localStorage.getItem('neonSlime_history');
+      if (storedHistory) {
+        setGameHistory(JSON.parse(storedHistory));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  // Persist player names when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('neonSlime_playerNames', JSON.stringify(playerNames));
+    } catch {
+      // ignore storage errors
+    }
+  }, [playerNames]);
+
+  const handleTouchStart = (control) => {
+    setTouchControls(prev => ({ ...prev, [control]: true }));
+  };
+
+  const handleTouchEnd = (control) => {
+    setTouchControls(prev => ({ ...prev, [control]: false }));
+  };
+
+  useEffect(() => {
+    if (gameStarted && timeLeft > 0) {
+      const timer = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            setGameStarted(false);
+            determineWinner();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameStarted, timeLeft]);
+
+  const determineWinner = () => {
+    let result = 'Draw';
+    if (score.left > score.right) result = playerNames.left || t('cyanTeam');
+    else if (score.right > score.left) result = playerNames.right || t('redTeam');
+    setWinner(result === 'Draw' ? 'Draw' : result);
+
+    // Save match to history
+    const record = {
+      timestamp: new Date().toISOString(),
+      leftName: playerNames.left || t('cyanTeam'),
+      rightName: playerNames.right || t('redTeam'),
+      leftScore: score.left,
+      rightScore: score.right,
+      durationSeconds: matchDuration || (score.left === 0 && score.right === 0 ? 0 : matchDuration),
+      mode: gameMode,
+      difficulty,
+      playerMode,
+      result: result === 'Draw' ? 'Draw' : `${result} ${t('gameWinner')}`
+    };
+    setGameHistory(prev => {
+      const next = [record, ...prev].slice(0, 20);
+      try {
+        localStorage.setItem('neonSlime_history', JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  const resetPositions = () => {
+    const state = gameStateRef.current;
+    Object.assign(state.leftSlime, {
+      x: 200, y: GAME_HEIGHT - GROUND_HEIGHT, vx: 0, vy: 0,
+      isGrabbing: false, hasBall: false, goalLineTime: 0,
+      targetX: 200, lastDecisionTime: 0, decisionCooldown: 0, stableStart: true
+    });
+    Object.assign(state.rightSlime, {
+      x: 600, y: GAME_HEIGHT - GROUND_HEIGHT, vx: 0, vy: 0,
+      isGrabbing: false, hasBall: false, goalLineTime: 0
+    });
+    Object.assign(state.ball, {
+      x: GAME_WIDTH / 2, y: 150, vx: 0, vy: 0,
+      grabbedBy: null, grabAngle: 0, grabAngularVelocity: 0
+    });
+  };
+
+  const resetGame = () => {
+    resetPositions();
+    setScore({ left: 0, right: 0 });
+    setWinner(null);
+  };
+
+  const startGame = (mode) => {
+    const times = { '1min': 60, '2min': 120, '4min': 240, '8min': 480, 'worldcup': 300 };
+    resetGame();
+    setGameMode(mode);
+    setTimeLeft(times[mode]);
+    setMatchDuration(times[mode]);
+    setGameStarted(true);
+  };
+  const updateAI = useCallback(() => {
+    if (playerMode !== 'single') return;
+    const state = gameStateRef.current;
+    const ai = state.leftSlime;
+    const ball = state.ball;
+    
+    const difficultySettings = {
+      easy: { speed: 0.5, reaction: 30, accuracy: 0.4, aggression: 0.2, jumpChance: 0.3, grabDistance: 80 },
+      medium: { speed: 0.8, reaction: 15, accuracy: 0.7, aggression: 0.6, jumpChance: 0.6, grabDistance: 60 },
+      hard: { speed: 1.2, reaction: 5, accuracy: 0.95, aggression: 1.0, jumpChance: 0.9, grabDistance: 40 }
+    };
+    const settings = difficultySettings[difficulty] || difficultySettings.medium;
+    
+    if (ai.decisionCooldown > 0) {
+      ai.decisionCooldown--;
+      const diff = ai.targetX - ai.x;
+      if (Math.abs(diff) > 10) ai.vx = Math.sign(diff) * SLIME_SPEED * settings.speed * Math.min(Math.abs(diff) / 50, 1);
+      else ai.vx = 0;
+      return;
+    }
+    
+    if (ai.stableStart && timeLeft > 55) {
+      ai.targetX = 200;
+      ai.vx = 0;
+      if (Math.abs(ball.x - ai.x) < 150 || timeLeft <= 55) {
+        ai.stableStart = false;
+        ai.decisionCooldown = settings.reaction;
+      }
+      return;
+    }
+    
+    let newTargetX = ai.targetX;
+    let shouldJump = false;
+    let shouldGrab = false;
+    const aiDistanceToBall = Math.abs(ai.x - ball.x);
+    const ballHeight = GAME_HEIGHT - GROUND_HEIGHT - ball.y;
+    
+    // Offensive play - chase ball aggressively
+    if (ball.x > GAME_WIDTH * (0.3 + settings.aggression * 0.3) && ball.vx >= -2) {
+      newTargetX = ball.x - (20 + 20 * settings.accuracy);
+      if (aiDistanceToBall < settings.grabDistance && ballHeight < 40 && !ai.hasBall) shouldGrab = true;
+      if (aiDistanceToBall < 80 + 40 * settings.accuracy && ballHeight > 25 && ballHeight < 100 && Math.random() < settings.jumpChance) shouldJump = true;
+      
+      // Hard mode: predict ball movement
+      if (difficulty === 'hard' && Math.abs(ball.vx) > 1) {
+        newTargetX = ball.x + ball.vx * 10 - 30;
+      }
+    } 
+    // Defensive play - protect goal
+    else if (ball.x < GAME_WIDTH * (0.7 - settings.aggression * 0.2) || ball.vx < -1) {
+      newTargetX = Math.max(ball.x - (5 + 15 * settings.accuracy), SLIME_RADIUS + 10);
+      if (aiDistanceToBall < 100 + 50 * settings.accuracy && ballHeight < 120 && Math.random() < settings.jumpChance) shouldJump = true;
+      
+      // Emergency defense for hard mode
+      if (difficulty === 'hard' && ball.x < GOAL_WIDTH * 3 && ball.vx < -3) {
+        newTargetX = SLIME_RADIUS + 20;
+        shouldJump = true;
+      }
+    } 
+    // Midfield positioning
+    else {
+      newTargetX = GAME_WIDTH * (0.25 + settings.aggression * 0.15);
+      
+      // Hard mode: anticipate opponent moves
+      if (difficulty === 'hard' && state.rightSlime.vx !== 0) {
+        newTargetX += state.rightSlime.vx > 0 ? -30 : 30;
+      }
+    }
+    
+    const targetDiff = Math.abs(newTargetX - ai.targetX);
+    const minChange = difficulty === 'easy' ? 20 : difficulty === 'medium' ? 15 : 10;
+    
+    if (targetDiff > minChange) {
+      ai.targetX = newTargetX;
+      ai.decisionCooldown = settings.reaction;
+    }
+    
+    ai.isGrabbing = shouldGrab;
+    
+    const diff = ai.targetX - ai.x;
+    if (Math.abs(diff) > 10) ai.vx = Math.sign(diff) * SLIME_SPEED * settings.speed * Math.min(Math.abs(diff) / 50, 1);
+    else ai.vx = 0;
+    
+    if (shouldJump && ai.vy === 0) {
+      const jumpPower = difficulty === 'easy' ? SLIME_JUMP_POWER * 0.8 : 
+                       difficulty === 'medium' ? SLIME_JUMP_POWER : 
+                       SLIME_JUMP_POWER * 1.1;
+      ai.vy = jumpPower;
+      playSound('jump');
+    }
+  }, [playerMode, timeLeft, difficulty, playSound]);
+
+  const updatePhysics = useCallback(() => {
+    const state = gameStateRef.current;
+    const keys = keysRef.current;
+    
+    if (playerMode === 'multi') {
+      if (keys['a']) state.leftSlime.vx = -SLIME_SPEED;
+      else if (keys['d']) state.leftSlime.vx = SLIME_SPEED;
+      else state.leftSlime.vx = 0;
+      if (keys['w'] && state.leftSlime.y >= GAME_HEIGHT - GROUND_HEIGHT - 1) {
+        state.leftSlime.vy = SLIME_JUMP_POWER;
+        playSound('jump');
+      }
+      state.leftSlime.isGrabbing = keys['s'];
+      
+      if (keys['arrowleft']) state.rightSlime.vx = -SLIME_SPEED;
+      else if (keys['arrowright']) state.rightSlime.vx = SLIME_SPEED;
+      else state.rightSlime.vx = 0;
+      if (keys['arrowup'] && state.rightSlime.y >= GAME_HEIGHT - GROUND_HEIGHT - 1) {
+        state.rightSlime.vy = SLIME_JUMP_POWER;
+        playSound('jump');
+      }
+      state.rightSlime.isGrabbing = keys['arrowdown'];
+    } else {
+      // Mobile touch controls or keyboard
+      if (keys['arrowleft'] || touchControls.left) state.rightSlime.vx = -SLIME_SPEED;
+      else if (keys['arrowright'] || touchControls.right) state.rightSlime.vx = SLIME_SPEED;
+      else state.rightSlime.vx = 0;
+      if ((keys['arrowup'] || touchControls.jump) && state.rightSlime.y >= GAME_HEIGHT - GROUND_HEIGHT - 1) {
+        state.rightSlime.vy = SLIME_JUMP_POWER;
+        playSound('jump');
+      }
+      state.rightSlime.isGrabbing = keys['arrowdown'] || touchControls.grab;
+      updateAI();
+    }
+    
+    [state.leftSlime, state.rightSlime].forEach((slime, index) => {
+      slime.vy += GRAVITY;
+      slime.x += slime.vx;
+      slime.y += slime.vy;
+      
+      if (slime.x < SLIME_RADIUS) slime.x = SLIME_RADIUS;
+      if (slime.x > GAME_WIDTH - SLIME_RADIUS) slime.x = GAME_WIDTH - SLIME_RADIUS;
+      if (slime.y > GAME_HEIGHT - GROUND_HEIGHT) {
+        slime.y = GAME_HEIGHT - GROUND_HEIGHT;
+        slime.vy = 0;
+      }
+      
+      const isLeftSlime = index === 0;
+      const inOwnGoal = (isLeftSlime && slime.x < GOAL_WIDTH) || (!isLeftSlime && slime.x > GAME_WIDTH - GOAL_WIDTH);
+      if (inOwnGoal) {
+        slime.goalLineTime += 1/60;
+        if (slime.goalLineTime >= 1) {
+          setScore(prev => isLeftSlime ? { ...prev, right: prev.right + 1 } : { ...prev, left: prev.left + 1 });
+          playSound('goal');
+          resetPositions();
+        }
+      } else {
+        slime.goalLineTime = 0;
+      }
+    });
+    
+    if (state.ball.grabbedBy) {
+      const grabber = state.ball.grabbedBy === 'left' ? state.leftSlime : state.rightSlime;
+      state.ball.grabAngularVelocity += -grabber.vx * 0.008 * (state.ball.grabbedBy === 'left' ? 1 : -1);
+      state.ball.grabAngularVelocity *= 0.85;
+      state.ball.grabAngle += state.ball.grabAngularVelocity;
+      
+      if (state.ball.grabbedBy === 'left') {
+        state.ball.grabAngle = Math.max(-Math.PI/2, Math.min(Math.PI/2, state.ball.grabAngle));
+      } else {
+        while (state.ball.grabAngle < 0) state.ball.grabAngle += Math.PI * 2;
+        while (state.ball.grabAngle > Math.PI * 2) state.ball.grabAngle -= Math.PI * 2;
+        if (state.ball.grabAngle < Math.PI/2) state.ball.grabAngle = Math.PI/2;
+        if (state.ball.grabAngle > 3*Math.PI/2) state.ball.grabAngle = 3*Math.PI/2;
+      }
+      
+      const holdDistance = SLIME_RADIUS + BALL_RADIUS - 5;
+      state.ball.x = grabber.x + Math.cos(state.ball.grabAngle) * holdDistance;
+      state.ball.y = grabber.y + Math.sin(state.ball.grabAngle) * holdDistance;
+      state.ball.vx = grabber.vx;
+      state.ball.vy = grabber.vy;
+      
+      if (!grabber.isGrabbing) {
+        const releaseSpeed = Math.abs(state.ball.grabAngularVelocity) * 20;
+        state.ball.vx = grabber.vx * 1.5 + Math.cos(state.ball.grabAngle) * (3 + releaseSpeed);
+        state.ball.vy = grabber.vy - 2 + Math.sin(state.ball.grabAngle) * releaseSpeed * 0.3;
+        state.ball.grabbedBy = null;
+        state.ball.grabAngle = 0;
+        state.ball.grabAngularVelocity = 0;
+        grabber.hasBall = false;
+        playSound('ballHit');
+      }
+    } else {
+      state.ball.vy += GRAVITY;
+      state.ball.vx *= BALL_DAMPING;
+      state.ball.x += state.ball.vx;
+      state.ball.y += state.ball.vy;
+    }
+    
+    if (state.ball.x < BALL_RADIUS) {
+      state.ball.x = BALL_RADIUS;
+      state.ball.vx = -state.ball.vx * BALL_BOUNCE_DAMPING;
+      if (Math.abs(state.ball.vx) > 2) playSound('bounce');
+    }
+    if (state.ball.x > GAME_WIDTH - BALL_RADIUS) {
+      state.ball.x = GAME_WIDTH - BALL_RADIUS;
+      state.ball.vx = -state.ball.vx * BALL_BOUNCE_DAMPING;
+      if (Math.abs(state.ball.vx) > 2) playSound('bounce');
+    }
+    if (state.ball.y > GAME_HEIGHT - GROUND_HEIGHT - BALL_RADIUS) {
+      state.ball.y = GAME_HEIGHT - GROUND_HEIGHT - BALL_RADIUS;
+      state.ball.vy = -state.ball.vy * BALL_BOUNCE_DAMPING;
+      if (Math.abs(state.ball.vy) > 2) playSound('bounce');
+    }
+    if (state.ball.y < BALL_RADIUS) {
+      state.ball.y = BALL_RADIUS;
+      state.ball.vy = -state.ball.vy * BALL_BOUNCE_DAMPING;
+      if (Math.abs(state.ball.vy) > 2) playSound('bounce');
+    }
+    
+    if (state.ball.x <= BALL_RADIUS && state.ball.y > GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT) {
+      setScore(prev => ({ ...prev, right: prev.right + 1 }));
+      playSound('goal');
+      resetPositions();
+    } else if (state.ball.x >= GAME_WIDTH - BALL_RADIUS && state.ball.y > GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT) {
+      setScore(prev => ({ ...prev, left: prev.left + 1 }));
+      playSound('goal');
+      resetPositions();
+    }
+    
+    [state.leftSlime, state.rightSlime].forEach((slime, index) => {
+      const slimeName = index === 0 ? 'left' : 'right';
+      const otherSlime = index === 0 ? state.rightSlime : state.leftSlime;
+      const dx = state.ball.x - slime.x;
+      const dy = state.ball.y - slime.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < SLIME_RADIUS + BALL_RADIUS) {
+        if (state.ball.grabbedBy && state.ball.grabbedBy !== slimeName) {
+          const speed = Math.sqrt(slime.vx * slime.vx + slime.vy * slime.vy);
+          if (speed > 2 || Math.abs(slime.vy) > 5) {
+            const angle = Math.atan2(dy, dx);
+            state.ball.grabbedBy = null;
+            state.ball.grabAngle = 0;
+            state.ball.grabAngularVelocity = 0;
+            otherSlime.hasBall = false;
+            state.ball.vx = Math.cos(angle) * 8 + slime.vx;
+            state.ball.vy = Math.sin(angle) * 8 + slime.vy;
+          }
+        } else if (slime.isGrabbing && !state.ball.grabbedBy) {
+          state.ball.grabbedBy = slimeName;
+          state.ball.grabAngle = Math.atan2(dy, dx);
+          state.ball.grabAngularVelocity = 0;
+          slime.hasBall = true;
+          playSound('grab');
+        } else if (!state.ball.grabbedBy) {
+          const angle = Math.atan2(dy, dx);
+          if (state.ball.y < slime.y || Math.abs(angle) < Math.PI * 0.5) {
+            state.ball.x = slime.x + Math.cos(angle) * (SLIME_RADIUS + BALL_RADIUS);
+            state.ball.y = slime.y + Math.sin(angle) * (SLIME_RADIUS + BALL_RADIUS);
+            const speed = Math.sqrt(state.ball.vx * state.ball.vx + state.ball.vy * state.ball.vy);
+            state.ball.vx = Math.cos(angle) * speed * 1.5 + slime.vx * 0.5;
+            state.ball.vy = Math.sin(angle) * speed * 1.5 + slime.vy * 0.5;
+            const newSpeed = Math.sqrt(state.ball.vx * state.ball.vx + state.ball.vy * state.ball.vy);
+            if (newSpeed > MAX_BALL_SPEED) {
+              const scale = MAX_BALL_SPEED / newSpeed;
+              state.ball.vx *= scale;
+              state.ball.vy *= scale;
+            }
+            if (speed > 1) playSound('ballHit');
+          }
+        }
+      }
+    });
+  }, [playerMode, updateAI, touchControls.left, touchControls.right, touchControls.jump, touchControls.grab, playSound]);
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const state = gameStateRef.current;
+    
+    // Gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+    gradient.addColorStop(0, '#87CEEB');
+    gradient.addColorStop(1, '#4169E1');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    
+    // Grass texture
+    const grassGradient = ctx.createLinearGradient(0, GAME_HEIGHT - GROUND_HEIGHT, 0, GAME_HEIGHT);
+    grassGradient.addColorStop(0, '#32CD32');
+    grassGradient.addColorStop(1, '#228B22');
+    ctx.fillStyle = grassGradient;
+    ctx.fillRect(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT);
+    
+    // Field lines
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(GAME_WIDTH/2, GAME_HEIGHT - GROUND_HEIGHT);
+    ctx.lineTo(GAME_WIDTH/2, GAME_HEIGHT - GROUND_HEIGHT - 50);
+    ctx.arc(GAME_WIDTH/2, GAME_HEIGHT - GROUND_HEIGHT - 25, 25, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Enhanced goals with shadows
+    ctx.shadowColor = 'rgba(0,0,0,0.3)';
+    ctx.shadowBlur = 5;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 4;
+    
+    // Left goal
+    ctx.beginPath();
+    ctx.moveTo(0, GAME_HEIGHT - GROUND_HEIGHT);
+    ctx.lineTo(GOAL_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
+    ctx.lineTo(GOAL_WIDTH, GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT);
+    ctx.lineTo(0, GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT);
+    ctx.stroke();
+    
+    // Right goal
+    ctx.beginPath();
+    ctx.moveTo(GAME_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
+    ctx.lineTo(GAME_WIDTH - GOAL_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
+    ctx.lineTo(GAME_WIDTH - GOAL_WIDTH, GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT);
+    ctx.lineTo(GAME_WIDTH, GAME_HEIGHT - GROUND_HEIGHT - GOAL_HEIGHT);
+    ctx.stroke();
+    
+    ctx.shadowColor = 'transparent';
+    
+    const drawSlime = (slime, isRight, color, accent) => {
+      // Slime shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(slime.x, GAME_HEIGHT - GROUND_HEIGHT + 5, SLIME_RADIUS * 0.8, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Slime body with gradient
+      const slimeGradient = ctx.createRadialGradient(slime.x - 10, slime.y - 10, 0, slime.x, slime.y, SLIME_RADIUS);
+      slimeGradient.addColorStop(0, color);
+      slimeGradient.addColorStop(1, accent);
+      ctx.fillStyle = slimeGradient;
+      ctx.beginPath();
+      ctx.arc(slime.x, slime.y, SLIME_RADIUS, Math.PI, 0);
+      ctx.fill();
+      
+      // Slime shine
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.beginPath();
+      ctx.arc(slime.x - 8, slime.y - 15, 12, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Eyes with animation
+      const eyeOffset = Math.sin(Date.now() * 0.003) * 2;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      const eyeX = slime.x + (isRight ? -SLIME_RADIUS * 0.3 : SLIME_RADIUS * 0.3);
+      ctx.arc(eyeX, slime.y - SLIME_RADIUS * 0.3 + eyeOffset, 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      const pupilX = slime.x + (isRight ? -SLIME_RADIUS * 0.35 : SLIME_RADIUS * 0.35);
+      ctx.arc(pupilX, slime.y - SLIME_RADIUS * 0.3 + eyeOffset, 3, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Grab indicator
+      if (slime.isGrabbing) {
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(slime.x, slime.y, SLIME_RADIUS + 5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    };
+    
+    drawSlime(state.leftSlime, false, '#00CED1', '#008B8B');
+    drawSlime(state.rightSlime, true, '#DC143C', '#8B0000');
+    
+    // Enhanced ball with glow
+    const ballGlow = ctx.createRadialGradient(state.ball.x, state.ball.y, 0, state.ball.x, state.ball.y, BALL_RADIUS * 2);
+    ballGlow.addColorStop(0, 'rgba(255,215,0,0.8)');
+    ballGlow.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = ballGlow;
+    ctx.beginPath();
+    ctx.arc(state.ball.x, state.ball.y, BALL_RADIUS * 2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    const ballGradient = ctx.createRadialGradient(state.ball.x - 3, state.ball.y - 3, 0, state.ball.x, state.ball.y, BALL_RADIUS);
+    ballGradient.addColorStop(0, '#FFD700');
+    ballGradient.addColorStop(1, '#FFA500');
+    ctx.fillStyle = ballGradient;
+    ctx.beginPath();
+    ctx.arc(state.ball.x, state.ball.y, BALL_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Ball highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(state.ball.x - 3, state.ball.y - 3, 3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Draw text layers/watermarks
+    textLayers.forEach((layer) => {
+      if (!layer.text) return;
+      
+      ctx.save();
+      
+      // Set opacity
+      ctx.globalAlpha = layer.opacity;
+      
+      // Set font
+      ctx.font = `${layer.fontWeight} ${layer.fontSize}px ${layer.fontFamily}`;
+      
+      // Set text baseline for proper positioning
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      
+      // Apply rotation and translation
+      ctx.translate(layer.x, layer.y);
+      ctx.rotate((layer.rotation * Math.PI) / 180);
+      
+      // Draw shadow if enabled
+      if (layer.textShadow) {
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+      } else {
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+      }
+      
+      // Draw stroke if enabled
+      if (layer.stroke) {
+        ctx.strokeStyle = layer.strokeColor;
+        ctx.lineWidth = layer.strokeWidth;
+        ctx.strokeText(layer.text, 0, 0);
+      }
+      
+      // Draw fill
+      ctx.fillStyle = layer.color;
+      ctx.fillText(layer.text, 0, 0);
+      
+      ctx.restore();
+    });
+  }, [textLayers]);
+
+  const gameLoop = useCallback((currentTime) => {
+    if (gameStarted) {
+      if (currentTime - lastFrameTimeRef.current >= 16.67) {
+        updatePhysics();
+        draw();
+        lastFrameTimeRef.current = currentTime;
+      }
+      animationRef.current = requestAnimationFrame(gameLoop);
+    }
+  }, [gameStarted, updatePhysics, draw]);
+
+  useEffect(() => {
+    if (gameStarted) animationRef.current = requestAnimationFrame(gameLoop);
+    return () => animationRef.current && cancelAnimationFrame(animationRef.current);
+  }, [gameStarted, gameLoop]);
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="min-h-screen relative overflow-hidden">
+      {/* Animated Background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-emerald-950 to-slate-950">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-emerald-700/30 via-slate-950/60 to-slate-950"></div>
+        <div className="absolute -top-10 left-1/4 w-96 h-96 bg-emerald-500/15 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute bottom-0 right-1/4 w-[28rem] h-[28rem] bg-lime-400/10 rounded-full blur-3xl animate-pulse delay-700"></div>
+        <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-cyan-400/10 rounded-full blur-3xl animate-pulse delay-500"></div>
+      </div>
+      
+      <div className="relative z-10 min-h-screen flex flex-col p-4 text-white">
+        {/* Header */}
+        <header className="w-full max-w-6xl mx-auto mb-4">
+          <div className="flex items-center justify-between bg-black/40 backdrop-blur-2xl border border-emerald-500/30 rounded-2xl px-6 py-4 shadow-xl shadow-emerald-500/20">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-lime-400 shadow-lg shadow-emerald-400/50 flex items-center justify-center text-2xl">
+                ⚽
+              </div>
+              <div>
+                <div className="text-lg font-semibold tracking-wide text-emerald-200/90">
+                  Neon Slime Arena
+                </div>
+                <div className="text-xs text-emerald-100/70">
+                  Created by Jayasurya • Custom names, history & AI opponents
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs md:text-sm">
+              <button
+                onClick={() => setShowHistory(prev => !prev)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600/70 hover:bg-emerald-500/80 border border-emerald-300/40 font-semibold transition-all"
+              >
+                {showHistory ? 'Hide History' : 'Match History'}
+              </button>
+              <button
+                onClick={() => setTextEditorOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-cyan-600/70 hover:bg-cyan-500/80 border border-cyan-300/40 font-semibold transition-all hidden md:inline-flex"
+              >
+                Text & Watermark
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Main content */}
+        <main className="flex-1 w-full flex flex-col items-center justify-center">
+        {!gameStarted && !gameMode && !playerMode && (
+          <div className="text-center animate-fade-in">
+            <div className="mb-12 relative">
+              <div className="absolute -inset-4 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-3xl blur-xl opacity-30 animate-pulse"></div>
+              <div className="relative bg-black/20 backdrop-blur-xl rounded-3xl p-8 border border-white/10">
+                <h1 className="text-7xl font-black mb-6 bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent animate-pulse">
+                  ⚽ {t('gameTitle')} ⚽
+                </h1>
+                <div className="w-48 h-2 bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 mx-auto rounded-full opacity-80"></div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-center mb-6">
+              <button 
+                onClick={() => setPlayerMode('single')} 
+                className="group relative overflow-hidden px-8 md:px-12 py-6 md:py-8 bg-gradient-to-br from-emerald-500/80 to-teal-600/80 backdrop-blur-xl rounded-2xl border border-emerald-400/30 text-lg md:text-xl font-bold transform hover:scale-110 transition-all duration-300 shadow-2xl hover:shadow-emerald-500/25 w-full md:w-auto"
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-emerald-400/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="relative flex items-center gap-4">
+                  <span className="text-3xl animate-bounce">🤖</span>
+                  <div>
+                    <div className="text-xl">{t('singlePlayer')}</div>
+                    <div className="text-sm opacity-70">vs AI</div>
+                  </div>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => setPlayerMode('multi')} 
+                className="group relative overflow-hidden px-8 md:px-12 py-6 md:py-8 bg-gradient-to-br from-purple-500/80 to-pink-600/80 backdrop-blur-xl rounded-2xl border border-purple-400/30 text-lg md:text-xl font-bold transform hover:scale-110 transition-all duration-300 shadow-2xl hover:shadow-purple-500/25 w-full md:w-auto"
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-400/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="relative flex items-center gap-4">
+                  <span className="text-3xl animate-bounce delay-100">👥</span>
+                  <div>
+                    <div className="text-xl">{t('multiplayer')}</div>
+                    <div className="text-sm opacity-70">Local 1v1</div>
+                  </div>
+                </div>
+              </button>
+            </div>
+            
+            <button 
+              onClick={() => setTextEditorOpen(true)} 
+              className="group relative overflow-hidden px-8 md:px-12 py-4 md:py-5 bg-gradient-to-br from-cyan-500/80 to-blue-600/80 backdrop-blur-xl rounded-2xl border border-cyan-400/30 text-base md:text-lg font-bold transform hover:scale-105 transition-all duration-300 shadow-2xl hover:shadow-cyan-500/25 w-full md:w-auto"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-400/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              <div className="relative flex items-center gap-3">
+                <span className="text-2xl">✨</span>
+                <div>
+                  <div className="text-lg">Text & Watermark Editor</div>
+                  <div className="text-xs opacity-70">Customize text, fonts, colors & effects</div>
+                </div>
+              </div>
+            </button>
+          </div>
+        )}
+        
+        {playerMode === 'single' && !difficulty && (
+          <div className="text-center animate-slide-in max-w-4xl w-full">
+            <div className="mb-12">
+              <h2 className="text-5xl font-black mb-6 bg-gradient-to-r from-green-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+                {t('selectDifficulty')}
+              </h2>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-12">
+              {[
+                { diff: 'easy', icon: '😊', label: t('easy'), color: 'from-green-500 to-emerald-500', desc: 'Relaxed AI' },
+                { diff: 'medium', icon: '😐', label: t('medium'), color: 'from-yellow-500 to-orange-500', desc: 'Balanced AI' },
+                { diff: 'hard', icon: '😤', label: t('hard'), color: 'from-red-500 to-pink-500', desc: 'Expert AI' }
+              ].map(({ diff, icon, label, color, desc }) => (
+                <button 
+                  key={diff} 
+                  onClick={() => setDifficulty(diff)} 
+                  className={`group relative overflow-hidden px-10 py-8 bg-gradient-to-br ${color}/80 backdrop-blur-xl rounded-3xl border border-white/20 font-bold transform hover:scale-110 transition-all duration-300 shadow-2xl hover:shadow-lg`}
+                >
+                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative">
+                    <div className="text-5xl mb-4 animate-bounce">{icon}</div>
+                    <div className="text-2xl font-black mb-2">{label}</div>
+                    <div className="text-sm opacity-80">{desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            
+            <button 
+              onClick={() => setPlayerMode(null)} 
+              className="px-8 py-4 bg-gray-800/50 backdrop-blur-xl hover:bg-gray-700/50 rounded-xl border border-gray-600/30 font-semibold transition-all duration-300 hover:scale-105"
+            >
+              ← {t('backButton')}
+            </button>
+          </div>
+        )}
+        
+        {((playerMode === 'single' && difficulty) || playerMode === 'multi') && !gameStarted && !gameMode && (
+          <div className="text-center animate-slide-in max-w-6xl w-full">
+            <div className="mb-12">
+              <h2 className="text-5xl font-black mb-6 bg-gradient-to-r from-emerald-300 via-cyan-300 to-lime-300 bg-clip-text text-transparent">
+                {t('selectDuration')}
+              </h2>
+
+              {/* Player name inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="bg-emerald-900/40 border border-emerald-500/40 rounded-2xl p-4 text-left">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="w-6 h-6 rounded-full bg-gradient-to-r from-cyan-400 to-cyan-600 shadow-lg shadow-cyan-500/40" />
+                    <span className="text-sm font-semibold text-emerald-200">Left Player (Cyan)</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={playerNames.left}
+                    onChange={(e) => setPlayerNames(prev => ({ ...prev, left: e.target.value }))}
+                    placeholder={t('cyanTeam')}
+                    className="w-full px-4 py-2 rounded-xl bg-black/40 border border-emerald-500/40 text-white placeholder:text-emerald-300/60 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+                <div className="bg-rose-900/40 border border-rose-500/40 rounded-2xl p-4 text-left">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="w-6 h-6 rounded-full bg-gradient-to-r from-rose-400 to-red-600 shadow-lg shadow-rose-500/40" />
+                    <span className="text-sm font-semibold text-rose-100">Right Player (Red)</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={playerNames.right}
+                    onChange={(e) => setPlayerNames(prev => ({ ...prev, right: e.target.value }))}
+                    placeholder={t('redTeam')}
+                    className="w-full px-4 py-2 rounded-xl bg-black/40 border border-rose-500/40 text-white placeholder:text-rose-200/70 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center gap-8 mb-4">
+                <div className="relative">
+                  <div className="absolute -inset-2 bg-cyan-500/30 rounded-xl blur-lg"></div>
+                  <div className="relative px-6 py-3 bg-cyan-500/80 backdrop-blur-xl rounded-xl border border-cyan-400/30 text-white font-bold text-lg">
+                    {playerNames.left || t('cyanTeam')}
+                  </div>
+                </div>
+                <div className="text-4xl animate-pulse">⚔️</div>
+                <div className="relative">
+                  <div className="absolute -inset-2 bg-red-500/30 rounded-xl blur-lg"></div>
+                  <div className="relative px-6 py-3 bg-red-500/80 backdrop-blur-xl rounded-xl border border-red-400/30 text-white font-bold text-lg">
+                    {playerNames.right || t('redTeam')}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-6 mb-12">
+              {[
+                { mode: '1min', icon: '⚡', label: t('oneMinute'), color: 'from-yellow-500 to-orange-500' },
+                { mode: '2min', icon: '🔥', label: t('twoMinutes'), color: 'from-orange-500 to-red-500' },
+                { mode: '4min', icon: '⭐', label: t('fourMinutes'), color: 'from-blue-500 to-purple-500' },
+                { mode: '8min', icon: '🏆', label: t('eightMinutes'), color: 'from-purple-500 to-pink-500' },
+                { mode: 'worldcup', icon: '🌍', label: t('worldCup'), color: 'from-green-500 to-emerald-500' }
+              ].map(({ mode, icon, label, color }) => (
+                <button 
+                  key={mode} 
+                  onClick={() => startGame(mode)} 
+                  className={`group relative overflow-hidden px-8 py-6 bg-gradient-to-br ${color}/80 backdrop-blur-xl rounded-2xl border border-white/20 font-bold transform hover:scale-110 transition-all duration-300 shadow-2xl hover:shadow-lg`}
+                >
+                  <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative">
+                    <div className="text-3xl mb-2 animate-bounce">{icon}</div>
+                    <div className="text-sm font-semibold">{label}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            
+            <div className="relative mb-8">
+              <div className="absolute -inset-4 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-3xl blur-xl"></div>
+              <div className="relative bg-black/30 backdrop-blur-2xl rounded-3xl p-8 border border-white/10">
+                <h3 className="text-2xl font-bold mb-6 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">🎮 Controls</h3>
+                {playerMode === 'multi' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-cyan-500/20 backdrop-blur-xl p-6 rounded-2xl border border-cyan-400/30">
+                      <div className="font-bold text-cyan-300 mb-3 text-lg">Left Player (Cyan)</div>
+                      <div className="text-cyan-100">{t('multiplayerControls1')}</div>
+                    </div>
+                    <div className="bg-red-500/20 backdrop-blur-xl p-6 rounded-2xl border border-red-400/30">
+                      <div className="font-bold text-red-300 mb-3 text-lg">Right Player (Red)</div>
+                      <div className="text-red-100">{t('multiplayerControls2')}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-green-300 text-lg">{t('singlePlayerControls1')}</p>
+                    <p className="text-yellow-300 text-lg">{t('singlePlayerControls2')}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => playerMode === 'single' ? setDifficulty(null) : setPlayerMode(null)} 
+              className="px-8 py-4 bg-gray-800/50 backdrop-blur-xl hover:bg-gray-700/50 rounded-xl border border-gray-600/30 font-semibold transition-all duration-300 hover:scale-105"
+            >
+              ← {t('backButton')}
+            </button>
+          </div>
+        )}
+        
+        {(gameStarted || winner) && (
+          <div className="flex flex-col items-center animate-fade-in w-full max-w-4xl">
+            <div className="relative w-full mb-4">
+              <div className="absolute -inset-2 bg-gradient-to-r from-blue-500/30 to-purple-500/30 rounded-2xl blur-xl"></div>
+              <div className="relative bg-black/40 backdrop-blur-2xl px-8 py-6 rounded-2xl border border-white/20 flex justify-between items-center">
+                <button 
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className="absolute top-2 right-2 p-2 bg-gray-800/50 hover:bg-gray-700/50 rounded-lg border border-gray-600/30 transition-all duration-300"
+                  title={soundEnabled ? 'Mute sounds' : 'Enable sounds'}
+                >
+                  <span className="text-lg">{soundEnabled ? '🔊' : '🔇'}</span>
+                </button>
+                <div className="flex items-center gap-4">
+                  <div className="w-6 h-6 bg-gradient-to-r from-cyan-400 to-cyan-600 rounded-full animate-pulse shadow-lg shadow-cyan-500/50"></div>
+                  <div className="flex flex-col">
+                    <span className="text-xs uppercase tracking-wide text-cyan-200/80">
+                      {playerNames.left || t('cyanTeam')}
+                    </span>
+                    <span className="text-2xl font-black bg-gradient-to-r from-cyan-300 to-cyan-500 bg-clip-text text-transparent">
+                      {score.left}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-4xl font-mono font-black bg-gradient-to-r from-yellow-300 to-orange-400 bg-clip-text text-transparent">
+                    {formatTime(timeLeft)}
+                  </div>
+                  <div className="text-xs text-gray-400 font-semibold tracking-wider">TIME LEFT</div>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col items-end">
+                    <span className="text-xs uppercase tracking-wide text-red-100/80">
+                      {playerNames.right || t('redTeam')}
+                    </span>
+                    <span className="text-2xl font-black bg-gradient-to-r from-red-300 to-red-500 bg-clip-text text-transparent">
+                      {score.right}
+                    </span>
+                  </div>
+                  <div className="w-6 h-6 bg-gradient-to-r from-red-400 to-red-600 rounded-full animate-pulse shadow-lg shadow-red-500/50"></div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="relative">
+              <div className="absolute -inset-4 bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-pink-500/20 rounded-3xl blur-2xl"></div>
+              <div className="relative">
+                <canvas 
+                  ref={canvasRef} 
+                  width={GAME_WIDTH} 
+                  height={GAME_HEIGHT} 
+                  className={`border-4 border-white/20 rounded-2xl shadow-2xl backdrop-blur-xl ${isMobile ? 'max-w-full h-auto' : ''}`}
+                  style={isMobile ? { width: '100%', maxWidth: '400px' } : {}}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent rounded-2xl pointer-events-none"></div>
+              </div>
+            </div>
+            
+            {/* Mobile Touch Controls */}
+            {isMobile && gameStarted && (
+              <div className="mt-6 w-full max-w-md">
+                <div className="grid grid-cols-4 gap-4">
+                  <button
+                    onTouchStart={() => handleTouchStart('left')}
+                    onTouchEnd={() => handleTouchEnd('left')}
+                    onMouseDown={() => handleTouchStart('left')}
+                    onMouseUp={() => handleTouchEnd('left')}
+                    className="bg-blue-500/80 backdrop-blur-xl rounded-xl p-4 text-2xl font-bold border border-blue-400/30 active:bg-blue-400/80 select-none"
+                  >
+                    ←
+                  </button>
+                  <button
+                    onTouchStart={() => handleTouchStart('jump')}
+                    onTouchEnd={() => handleTouchEnd('jump')}
+                    onMouseDown={() => handleTouchStart('jump')}
+                    onMouseUp={() => handleTouchEnd('jump')}
+                    className="bg-green-500/80 backdrop-blur-xl rounded-xl p-4 text-xl font-bold border border-green-400/30 active:bg-green-400/80 select-none"
+                  >
+                    JUMP
+                  </button>
+                  <button
+                    onTouchStart={() => handleTouchStart('grab')}
+                    onTouchEnd={() => handleTouchEnd('grab')}
+                    onMouseDown={() => handleTouchStart('grab')}
+                    onMouseUp={() => handleTouchEnd('grab')}
+                    className="bg-yellow-500/80 backdrop-blur-xl rounded-xl p-4 text-xl font-bold border border-yellow-400/30 active:bg-yellow-400/80 select-none"
+                  >
+                    GRAB
+                  </button>
+                  <button
+                    onTouchStart={() => handleTouchStart('right')}
+                    onTouchEnd={() => handleTouchEnd('right')}
+                    onMouseDown={() => handleTouchStart('right')}
+                    onMouseUp={() => handleTouchEnd('right')}
+                    className="bg-blue-500/80 backdrop-blur-xl rounded-xl p-4 text-2xl font-bold border border-blue-400/30 active:bg-blue-400/80 select-none"
+                  >
+                    →
+                  </button>
+                </div>
+                <div className="text-center mt-3 text-sm text-gray-400">
+                  Touch controls for mobile
+                </div>
+              </div>
+            )}
+            
+            {winner && (
+              <div className="mt-12 text-center animate-bounce-in">
+                <div className="relative">
+                  <div className="absolute -inset-8 bg-gradient-to-r from-yellow-400/30 via-orange-400/30 to-red-400/30 rounded-3xl blur-2xl animate-pulse"></div>
+                  <div className="relative bg-gradient-to-br from-yellow-400 via-orange-400 to-red-400 p-12 rounded-3xl shadow-2xl border-4 border-white/20">
+                    <div className="text-8xl mb-6 animate-bounce">{winner === 'Draw' ? '🤝' : '🏆'}</div>
+                    <h2 className="text-5xl font-black mb-8 text-gray-900">
+                      {winner === 'Draw' ? t('gameDraw') : `${winner} ${t('gameWinner')}`}
+                    </h2>
+                    <button 
+                      onClick={() => { setGameMode(null); setPlayerMode(null); setDifficulty(null); setWinner(null); }} 
+                      className="px-12 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-2xl text-white font-black text-xl transform hover:scale-110 transition-all duration-300 shadow-2xl border-2 border-white/20"
+                    >
+                      🏠 {t('backToMenu')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        </main>
+
+        {/* Footer */}
+        <footer className="w-full max-w-6xl mx-auto mt-4 text-xs text-emerald-100/70 flex flex-col md:flex-row items-center justify-between gap-2">
+          <div>© {new Date().getFullYear()} Neon Slime Arena • Built with React & Canvas</div>
+          <div className="flex gap-3">
+            <span>Player names & history stored locally in your browser.</span>
+          </div>
+        </footer>
+      </div>
+      
+      {/* Text Editor Modal */}
+      <TextEditor
+        isOpen={textEditorOpen}
+        onClose={() => setTextEditorOpen(false)}
+        onSave={(layers) => {
+          setTextLayers(layers);
+          setTextEditorOpen(false);
+        }}
+      />
+    </div>
+  );
+};
+
+export default SlimeSoccer;
