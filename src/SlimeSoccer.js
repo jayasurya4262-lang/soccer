@@ -886,6 +886,34 @@ const SlimeSoccer = () => {
 
         {/* Main content */}
         <main className="flex-1 w-full flex flex-col items-center justify-center">
+        {/* Match History Display */}
+        {showHistory && (
+          <div className="w-full max-w-4xl mb-6 animate-fade-in">
+            <div className="bg-black/40 backdrop-blur-2xl rounded-2xl border border-white/20 p-6">
+              <h3 className="text-2xl font-bold mb-4 bg-gradient-to-r from-emerald-300 to-cyan-300 bg-clip-text text-transparent">
+                📊 Match History ({gameHistory.length} games)
+              </h3>
+              {gameHistory.length === 0 ? (
+                <p className="text-gray-400 text-center py-8">No games played yet. Start playing to see your history!</p>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {gameHistory.slice(0, 10).map((game, idx) => (
+                    <div key={idx} className="bg-white/5 rounded-lg p-3 border border-white/10">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-emerald-300 font-semibold">{game.leftName}</span>
+                        <span className="text-white font-bold">{game.leftScore} - {game.rightScore}</span>
+                        <span className="text-rose-300 font-semibold">{game.rightName}</span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        {new Date(game.timestamp).toLocaleString()} • {game.mode} • {game.result}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {!gameStarted && !gameMode && !playerMode && (
           <div className="text-center animate-fade-in">
             <div className="mb-12 relative">
