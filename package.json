@@ -2,7 +2,7 @@
   "name": "soccer-slime",
   "version": "1.0.0",
   "private": true,
-  "homepage": "https://jayasurya.github.io/Soccer-Slime",
+  "homepage": "/Soccer-Slime",
   "author": "Jayasurya",
   "dependencies": {
     "react": "^18.2.0",
